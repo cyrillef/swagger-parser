@@ -21,6 +21,7 @@ import java.util.Map;
 
 import static org.junit.Assert.assertNotNull;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
 
@@ -134,6 +135,53 @@ public class SwaggerParserTest {
     }
 
     @Test
+    public void testUniqueParameters() throws Exception {
+        String yaml =
+                "swagger: '2.0'\n" +
+                "info:\n" +
+                "  title: test\n" +
+                "  version: '0.0.0'\n" +
+                "parameters:\n" +
+                "  foo-id:\n" +
+                "    name: id\n" +
+                "    in: path\n" +
+                "    type: string\n" +
+                "    required: true\n" +
+                "paths:\n" +
+                "  /foos/{id}:\n" +
+                "    parameters:\n" +
+                "        - $ref: '#/parameters/foo-id'\n" +
+                "    get:\n" +
+                "      responses:\n" +
+                "        200:\n" +
+                "          schema:\n" +
+                "            $ref: '#/definitions/foo'\n" +
+                "    put:\n" +
+                "      parameters:\n" +
+                "        - name: foo\n" +
+                "          in: body\n" +
+                "          required: true\n" +
+                "          schema:\n" +
+                "            $ref: '#/definitions/foo'\n" +
+                "      responses:\n" +
+                "        200:\n" +
+                "          schema:\n" +
+                "            $ref: '#/definitions/foo'\n" +
+                "definitions:\n" +
+                "  foo:\n" +
+                "    type: object\n" +
+                "    properties:\n" +
+                "      id:\n" +
+                "        type: string\n" +
+                "    required:\n" +
+                "      - id\n";
+        SwaggerParser parser = new SwaggerParser();
+        Swagger swagger = parser.parse(yaml);
+        List<Parameter> parameters = swagger.getPath("/foos/{id}").getPut().getParameters();
+        assertTrue(parameters.size() == 2);
+    }
+
+    @Test
     public void testLoadRelativeFileTree_Json() throws Exception {
         final Swagger swagger = doRelativeFileTest("src/test/resources/relative-file-references/json/parent.json");
         //Json.mapper().writerWithDefaultPrettyPrinter().writeValue(new File("resolved.json"), swagger);
@@ -179,6 +227,28 @@ public class SwaggerParserTest {
                 "src/test/resources/relative-file-references/yaml");
         final Swagger swagger = doRelativeFileTest("src/test/resources/relative-file-references/yaml/parent.yaml");
         assertNotNull(Yaml.mapper().writeValueAsString(swagger));
+    }
+
+    @Test(enabled = false)
+    public void testLoadRecursiveExternalDef() throws Exception {
+        SwaggerParser parser = new SwaggerParser();
+        final Swagger swagger = parser.read("src/test/resources/file-reference-to-recursive-defs/b.yaml");
+
+        Json.prettyPrint(swagger);
+        Map<String, Model> definitions = swagger.getDefinitions();
+        assertEquals(((RefProperty) ((ArrayProperty) definitions.get("v").getProperties().get("children")).getItems()).get$ref(), "#/definitions/v");
+        assertTrue(!definitions.containsKey("y"));
+        assertEquals(((RefProperty) ((ArrayProperty) definitions.get("x").getProperties().get("children")).getItems()).get$ref(), "#/definitions/x");
+    }
+
+    @Test
+    public void testLoadNestedItemsReferences() {
+        SwaggerParser parser = new SwaggerParser();
+        SwaggerDeserializationResult result = parser.readWithInfo("src/test/resources/nested-items-references/b.yaml", null, true);
+        Swagger swagger = result.getSwagger();
+        Map<String, Model> definitions = swagger.getDefinitions();
+        assertTrue(definitions.containsKey("z"));
+        assertTrue(definitions.containsKey("w"));
     }
 
     @Test
@@ -292,6 +362,65 @@ public class SwaggerParserTest {
     }
 
     @Test
+    public void testIssue292WithNoCollectionFormat() {
+        String yaml =
+                "swagger: '2.0'\n" +
+                "info:\n" +
+                "  version: '0.0.0'\n" +
+                "  title: nada\n" +
+                "paths:\n" +
+                "  /persons:\n" +
+                "    get:\n" +
+                "      parameters:\n" +
+                "      - name: testParam\n" +
+                "        in: query\n" +
+                "        type: array\n" +
+                "        items:\n" +
+                "          type: string\n" +
+                "      responses:\n" +
+                "        200:\n" +
+                "          description: Successful response";
+        SwaggerParser parser = new SwaggerParser();
+        SwaggerDeserializationResult result = parser.readWithInfo(yaml);
+
+        Swagger swagger = result.getSwagger();
+
+        Parameter param = swagger.getPaths().get("/persons").getGet().getParameters().get(0);
+        QueryParameter qp = (QueryParameter) param;
+        assertNull(qp.getCollectionFormat());
+    }
+
+    @Test
+    public void testIssue292WithCSVCollectionFormat() {
+        String yaml =
+                "swagger: '2.0'\n" +
+                        "info:\n" +
+                        "  version: '0.0.0'\n" +
+                        "  title: nada\n" +
+                        "paths:\n" +
+                        "  /persons:\n" +
+                        "    get:\n" +
+                        "      parameters:\n" +
+                        "      - name: testParam\n" +
+                        "        in: query\n" +
+                        "        type: array\n" +
+                        "        items:\n" +
+                        "          type: string\n" +
+                        "        collectionFormat: csv\n" +
+                        "      responses:\n" +
+                        "        200:\n" +
+                        "          description: Successful response";
+        SwaggerParser parser = new SwaggerParser();
+        SwaggerDeserializationResult result = parser.readWithInfo(yaml);
+
+        Swagger swagger = result.getSwagger();
+
+        Parameter param = swagger.getPaths().get("/persons").getGet().getParameters().get(0);
+        QueryParameter qp = (QueryParameter) param;
+        assertEquals(qp.getCollectionFormat(), "csv");
+    }
+
+    @Test
     public void testIssue255() {
         SwaggerParser parser = new SwaggerParser();
 
@@ -383,5 +512,17 @@ public class SwaggerParserTest {
         assertEquals(param1.getClass(), expectedType);
         assertEquals(param1.getName(), expectedName);
         assertEquals(param1.getIn(), expectedIn);
+    }
+
+
+    @Test
+    public void testNestedReferences() {
+        SwaggerParser parser = new SwaggerParser();
+        final Swagger swagger = parser.read("src/test/resources/relative-file-references/json/parent.json");
+        assertTrue(swagger.getDefinitions().containsKey("externalArray"));
+        assertTrue(swagger.getDefinitions().containsKey("referencedByLocalArray"));
+        assertTrue(swagger.getDefinitions().containsKey("externalObject"));
+        assertTrue(swagger.getDefinitions().containsKey("referencedByLocalElement"));
+        assertTrue(swagger.getDefinitions().containsKey("referencedBy"));
     }
 }
